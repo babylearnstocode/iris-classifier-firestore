@@ -1,0 +1,20 @@
+{
+  "trained_at": "2025-07-09T19:54:54.008656",
+  "feature_names": [
+    "sepal_length",
+    "sepal_width",
+    "petal_length",
+    "petal_width"
+  ],
+  "target_names": [
+    "setosa",
+    "versicolor",
+    "virginica"
+  ],
+  "data_shape": [
+    150,
+    6
+  ],
+  "train_size": 120,
+  "test_size": 30
+}
