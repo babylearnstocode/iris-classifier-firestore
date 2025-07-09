@@ -11,37 +11,23 @@ from firebase_admin import credentials, firestore
 import os
 from datetime import datetime
 import json
+import sys
+sys.path.append('..')
+from firebase_config import FirebaseConfig
 
 class IrisDataLoader:
-    def __init__(self, firebase_config_path=None):
-        """
-        Khởi tạo IrisDataLoader
-        
-        Args:
-            firebase_config_path: Đường dẫn đến file config Firebase
-        """
-        self.firebase_config_path = firebase_config_path
+    def __init__(self):
+        """Khởi tạo IrisDataLoader"""
+        self.firebase_config = FirebaseConfig()
         self.db = None
         self.iris_data = None
         
     def initialize_firebase(self):
         """Khởi tạo kết nối Firebase"""
-        try:
-            if not firebase_admin._apps:
-                if self.firebase_config_path and os.path.exists(self.firebase_config_path):
-                    cred = credentials.Certificate(self.firebase_config_path)
-                    firebase_admin.initialize_app(cred)
-                else:
-                    # Sử dụng biến môi trường
-                    firebase_admin.initialize_app()
-            
-            self.db = firestore.client()
-            print("✅ Kết nối Firebase thành công!")
+        if self.firebase_config.initialize_app():
+            self.db = self.firebase_config.get_firestore_client()
             return True
-            
-        except Exception as e:
-            print(f"❌ Lỗi kết nối Firebase: {e}")
-            return False
+        return False
     
     def load_iris_dataset(self):
         """Tải dữ liệu Iris từ sklearn"""
@@ -191,15 +177,15 @@ def main():
     # Lưu CSV
     loader.save_to_csv()
     
-    # # Kết nối và upload Firebase (tùy chọn)
-    # choice = input("\n🔥 Bạn có muốn upload dữ liệu lên Firebase? (y/n): ").lower()
-    # if choice == 'y':
-    #     if loader.initialize_firebase():
-    #         loader.upload_to_firebase()
-    #     else:
-    #         print("⚠️ Không thể kết nối Firebase. Vui lòng kiểm tra cấu hình.")
+    # Kết nối và upload Firebase (tùy chọn)
+    choice = input("\n🔥 Bạn có muốn upload dữ liệu lên Firebase? (y/n): ").lower()
+    if choice == 'y':
+        if loader.initialize_firebase():
+            loader.upload_to_firebase()
+        else:
+            print("⚠️ Không thể kết nối Firebase. Vui lòng kiểm tra cấu hình.")
     
-    # print("\n✅ Hoàn thành!")
+    print("\n✅ Hoàn thành!")
 
 if __name__ == "__main__":
     main()
