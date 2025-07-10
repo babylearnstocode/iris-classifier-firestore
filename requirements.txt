@@ -1,8 +1,21 @@
-streamlit
-firebase-admin
-pandas
-numpy
-scikit-learn
-plotly
-seaborn
-matplotlib
+# Core libraries
+streamlit>=1.28.0
+pandas>=1.5.0
+numpy>=1.24.0
+scikit-learn>=1.3.0
+
+# Firebase
+firebase-admin>=6.2.0
+python-dotenv>=1.0.0
+
+# Machine Learning
+pickle-mixin>=1.0.2
+joblib>=1.3.0
+
+# Data visualization (if needed)
+plotly>=5.15.0
+matplotlib>=3.7.0
+seaborn>=0.12.0
+
+# Other utilities
+datetime

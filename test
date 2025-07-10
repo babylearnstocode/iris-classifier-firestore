@@ -1,0 +1,14 @@
+import os
+
+def tree(dir_path, prefix=''):
+    files = os.listdir(dir_path)
+    files.sort()
+    for i, f in enumerate(files):
+        path = os.path.join(dir_path, f)
+        is_last = (i == len(files) - 1)
+        print(prefix + ('└── ' if is_last else '├── ') + f)
+        if os.path.isdir(path):
+            new_prefix = prefix + ('    ' if is_last else '│   ')
+            tree(path, new_prefix)
+
+tree('.')
