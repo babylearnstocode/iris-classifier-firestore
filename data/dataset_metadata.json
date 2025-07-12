@@ -1,0 +1,15 @@
+{
+  "source": "firestore",
+  "loaded_at": "2025-07-12T09:53:31.392138",
+  "total_records": 150,
+  "features": [
+    "sepal_length",
+    "sepal_width",
+    "petal_length",
+    "petal_width"
+  ],
+  "target": "species",
+  "species_counts": {
+    "unknown": 150
+  }
+}
