@@ -20,8 +20,8 @@ from data_loader import DataLoader
 from model_trainer import ModelTrainer
 from firebase_config import FirebaseConfig
 
-
-# Initialize model trainer
+# Initialize components
+data_loader = DataLoader()
 model_trainer = ModelTrainer()
 
 # Initialize session state
@@ -36,60 +36,6 @@ if 'models_trained' not in st.session_state:
 
 if 'dataset' not in st.session_state:
     st.session_state.dataset = None
-
-def check_iris_dataset_exists():
-    """Check if iris dataset exists in data/iris_dataset.csv"""
-    try:
-        dataset_path = 'data/iris_dataset.csv'
-        if os.path.exists(dataset_path):
-            return dataset_path
-        return None
-    except Exception as e:
-        st.error(f"Error checking dataset: {str(e)}")
-        return None
-
-def load_existing_iris_dataset():
-    """Load existing iris dataset from data/iris_dataset.csv"""
-    try:
-        dataset_path = 'data/iris_dataset.csv'
-        if os.path.exists(dataset_path):
-            df = pd.read_csv(dataset_path)
-            
-            # Validate dataset structure
-            required_columns = ['sepal_length', 'sepal_width', 'petal_length', 'petal_width']
-            if all(col in df.columns for col in required_columns):
-                return df
-            else:
-                st.warning(f"Dataset found but missing required columns")
-                return None
-        return None
-    except Exception as e:
-        st.error(f"Error loading existing dataset: {str(e)}")
-        return None
-
-def load_iris_dataset():
-    """Load iris dataset from sklearn"""
-    try:
-        iris = load_iris()
-        df = pd.DataFrame(iris.data, columns=['sepal_length', 'sepal_width', 'petal_length', 'petal_width'])
-        df['species'] = iris.target_names[iris.target]
-        return df
-    except Exception as e:
-        st.error(f"Error loading iris dataset: {str(e)}")
-        return None
-
-def save_iris_dataset(df):
-    """Save iris dataset to data/iris_dataset.csv"""
-    try:
-        # Create data directory if it doesn't exist
-        os.makedirs("data", exist_ok=True)
-        
-        # Save as CSV
-        df.to_csv('data/iris_dataset.csv', index=False)
-        return True
-    except Exception as e:
-        st.error(f"Error saving dataset: {str(e)}")
-        return False
 
 def load_trained_model(model_name):
     """Load trained model from disk"""
@@ -156,16 +102,19 @@ def save_model_metadata(model_name, accuracy):
     except Exception as e:
         st.error(f"Error saving metadata: {str(e)}")
 
-def initialize_dataset():
-    """Initialize dataset on app startup"""
+def initialize_dataset(db):
+    """Initialize dataset using DataLoader with improved logic"""
     if not st.session_state.dataset_loaded:
-        # Check if dataset exists
-        existing_df = load_existing_iris_dataset()
-        if existing_df is not None:
+        # Sử dụng logic ưu tiên mới từ DataLoader
+        dataset = data_loader.initialize_dataset(db)
+        if dataset is not None:
             st.session_state.dataset_loaded = True
-            st.session_state.dataset = existing_df
+            st.session_state.dataset = dataset
             return True
-    return False
+        else:
+            # Nếu không có dataset, hiển thị thông báo và button get data
+            return False
+    return st.session_state.dataset_loaded
 
 # Main UI
 def main():
@@ -175,15 +124,16 @@ def main():
         layout="wide"
     )
     
-    # Initialize dataset on startup
-    dataset_auto_loaded = initialize_dataset()
-    
-    # Header
-    st.title("🌸 Iris ML Pipeline: Data Loading → Training → Prediction")
-    st.markdown("---")
-
+    # Initialize Firebase
     firebase_config = FirebaseConfig()
     db = firebase_config.get_firestore_client()
+    
+    # Initialize dataset on startup - cải thiện logic
+    dataset_initialized = initialize_dataset(db)
+    
+    # Header
+    st.title("🌸 Iris Classifier")
+    st.markdown("---")
 
     if db:
         st.sidebar.success("☁️ Connected to Firestore")
@@ -194,13 +144,18 @@ def main():
     with st.sidebar:
         st.header("Pipeline Status")
         
-        # Dataset status
+        # Dataset status - cải thiện hiển thị
         if st.session_state.dataset_loaded:
             st.success("📊 Dataset Ready")
-            if dataset_auto_loaded:
-                st.info("🔄 Dataset auto-loaded from existing file")
+            dataset_info = data_loader.get_dataset_info(st.session_state.dataset)
+            if dataset_info:
+                st.info(f"📋 {dataset_info['total_records']} records, {dataset_info['species_count']} species")
         else:
             st.warning("📊 Dataset Not Loaded")
+            if db:
+                st.info("💡 Data can be loaded from Firestore")
+            else:
+                st.error("❌ No data source available")
         
         # Model status
         if st.session_state.models_trained:
@@ -211,15 +166,15 @@ def main():
         st.markdown("---")
         st.header("Navigation")
         
-        # Navigation - conditionally show Data Loading page
+        # Navigation - cải thiện logic điều hướng
         pages = []
-        if not st.session_state.dataset_loaded:
-            pages.append("Data Loading")
         
-        pages.extend(["Model Training", "Prediction", "Analytics"])
+        # Luôn hiển thị Data Loading page để user có thể quản lý dữ liệu
+        pages.append("Data Loading")
         
+        # Chỉ hiển thị các page khác khi đã có dataset
         if st.session_state.dataset_loaded:
-            pages.insert(0, "Dataset Overview")
+            pages.extend(["Dataset Overview", "Model Training", "Prediction", "Analytics"])
         
         page = st.radio(
             "Select Page",
@@ -229,7 +184,7 @@ def main():
     
     # Main content based on selected page
     if page == "Data Loading":
-        show_data_loading_page()
+        show_data_loading_page(db)
     elif page == "Dataset Overview":
         show_dataset_overview_page()
     elif page == "Model Training":
@@ -303,102 +258,147 @@ def show_dataset_overview_page():
     # Hiển thị biểu đồ trong Streamlit
     st.pyplot(fig)
 
-
-
-def show_data_loading_page():
-    """Data loading page - only shown when dataset is not loaded"""
-    st.header("📊 Data Loading")
+def show_data_loading_page(db):
+    """Data loading page - cải thiện để sử dụng logic mới từ DataLoader"""
+    st.header("📊 Data Management")
     
+    # Hiển thị trạng thái hiện tại
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        st.subheader("Current Data Status")
+        
+        # Kiểm tra local dataset
+        local_exists = data_loader.check_local_dataset_exists()
+        if local_exists:
+            st.success("✅ Local dataset found")
+        else:
+            st.info("ℹ️ No local dataset found")
+        
+        # Kiểm tra Firestore connection
+        if db:
+            st.success("✅ Firestore connection active")
+        else:
+            st.error("❌ Firestore connection not available")
+        
+        # Hiển thị dataset hiện tại
+        if st.session_state.dataset_loaded:
+            dataset_info = data_loader.get_dataset_info(st.session_state.dataset)
+            if dataset_info:
+                st.info(f"📋 Current dataset: {dataset_info['total_records']} records, {dataset_info['species_count']} species")
+        else:
+            st.warning("⚠️ No dataset currently loaded")
+    
+    with col2:
+        st.subheader("Quick Actions")
+        
+        # Auto-load button - sử dụng logic mới từ DataLoader
+        if st.button("🔄 Auto-Load Dataset", type="primary"):
+            dataset = data_loader.initialize_dataset(db)
+            if dataset is not None:
+                st.session_state.dataset_loaded = True
+                st.session_state.dataset = dataset
+                st.success("✅ Dataset loaded successfully!")
+                st.rerun()
+            else:
+                st.error("❌ Could not load dataset")
+    
+    st.markdown("---")
+    
+    # Data source options
     col1, col2 = st.columns([1, 1])
     
     with col1:
-        st.subheader("Load Dataset")
+        st.subheader("📁 Local Data Management")
         
-        # Check if dataset exists
-        dataset_path = 'data/iris_dataset.csv'
-        if os.path.exists(dataset_path):
-            st.info(f"📁 Existing dataset found at: {dataset_path}")
-            
-            if st.button("📂 Load Existing Dataset"):
-                df = load_existing_iris_dataset()
+        # Load local dataset
+        if local_exists:
+            if st.button("📂 Load Local Dataset"):
+                df = data_loader.load_local_dataset()
                 if df is not None:
                     st.session_state.dataset_loaded = True
                     st.session_state.dataset = df
-                    st.success("✅ Existing dataset loaded successfully!")
+                    st.success("✅ Local dataset loaded!")
                     st.rerun()
-                else:
-                    st.error("❌ Failed to load existing dataset")
+        else:
+            st.info("No local dataset available")
         
-        st.markdown("---")
-        
-        # Load iris dataset
+        # Load fresh iris dataset
         if st.button("📁 Load Fresh Iris Dataset"):
-            df = load_iris_dataset()
+            df = data_loader.load_sklearn_iris()
             if df is not None:
                 st.session_state.dataset_loaded = True
                 st.session_state.dataset = df
                 
-                # Save the dataset
-                if save_iris_dataset(df):
-                    st.success("✅ Fresh Iris dataset loaded and saved successfully!")
-                else:
-                    st.warning("Dataset loaded but failed to save to disk")
+                # Save to local
+                data_loader.save_to_local(df)
                 
+                # Save to Firestore if connected
+                if db:
+                    data_loader.save_to_firestore(df, db)
+                
+                st.success("✅ Fresh Iris dataset loaded and saved!")
                 st.rerun()
-            else:
-                st.error("❌ Failed to load iris dataset")
     
     with col2:
-        st.subheader("Dataset Information")
+        st.subheader("☁️ Cloud Data Management")
         
-        if st.session_state.dataset_loaded:
-            df = st.session_state.dataset
+        if db:
+            # Load from Firestore
+            if st.button("☁️ Load from Firestore"):
+                df = data_loader.load_from_firestore(db)
+                if df is not None:
+                    st.session_state.dataset_loaded = True
+                    st.session_state.dataset = df
+                    # Save to local for future use
+                    data_loader.save_to_local(df)
+                    st.success("✅ Dataset loaded from Firestore!")
+                    st.rerun()
             
-            # Basic info
-            st.metric("Total Records", len(df))
-            st.metric("Features", len(df.columns) - 1)  # Exclude target column
-            st.metric("Species", len(df['species'].unique()))
+            # Refresh from Firestore
+            if st.button("🔄 Refresh from Firestore"):
+                df = data_loader.refresh_from_firestore(db)
+                if df is not None:
+                    st.session_state.dataset_loaded = True
+                    st.session_state.dataset = df
+                    st.success("✅ Dataset refreshed from Firestore!")
+                    st.rerun()
             
-            # Species distribution
-            st.subheader("Species Distribution")
-            species_counts = df['species'].value_counts()
-            st.bar_chart(species_counts)
+            # Upload local to Firestore
+            if local_exists:
+                if st.button("☁️ Upload Local to Firestore"):
+                    success = data_loader.upload_local_to_firestore(db)
+                    if success:
+                        st.success("✅ Local dataset uploaded to Firestore!")
         else:
-            st.info("No dataset loaded yet")
+            st.error("❌ Firestore connection not available")
+            st.info("Please check your Firebase configuration")
     
-    # Dataset preview
+    # Dataset preview section
     if st.session_state.dataset_loaded:
         st.markdown("---")
         st.subheader("Dataset Preview")
         
         df = st.session_state.dataset
         
+        # Show dataset info
+        dataset_info = data_loader.get_dataset_info(df)
+        if dataset_info:
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Total Records", dataset_info['total_records'])
+            with col2:
+                st.metric("Features", dataset_info['features'])
+            with col3:
+                st.metric("Species", dataset_info['species_count'])
+        
         # Show first few rows
-        st.dataframe(df.head())
+        st.dataframe(df.head(10), use_container_width=True)
         
-        # Dataset statistics
-        st.subheader("Dataset Statistics")
-        st.dataframe(df.describe())
-        
-        # Data visualization
-        st.subheader("Data Visualization")
-        
-        # Feature distributions
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            feature = st.selectbox("Select Feature", df.columns[:-1])
-            fig_hist = px.histogram(df, x=feature, color='species', 
-                                   title=f"Distribution of {feature}")
-            st.plotly_chart(fig_hist, use_container_width=True)
-        
-        with col2:
-            # Correlation matrix
-            numeric_cols = df.select_dtypes(include=[np.number]).columns
-            corr_matrix = df[numeric_cols].corr()
-            fig_corr = px.imshow(corr_matrix, text_auto=True, 
-                                title="Feature Correlation Matrix")
-            st.plotly_chart(fig_corr, use_container_width=True)
+        # Species distribution
+        st.subheader("Species Distribution")
+        species_counts = df['species'].value_counts()
+        st.bar_chart(species_counts)
 
 def show_model_training_page():
     """Model training page"""
@@ -670,10 +670,15 @@ def show_analytics_page():
         This application implements a complete Machine Learning pipeline for Iris flower classification:
         
         **Pipeline Steps:**
-        1. **Data Loading**: Load the iris dataset (auto-detects existing datasets)
+        1. **Data Loading**: Load from local → Firestore → sklearn (priority order)
         2. **Model Training**: Train multiple ML models with real-time visualization
         3. **Prediction**: Use trained models to predict iris species
         4. **Analytics**: Analyze model performance
+        
+        **Data Sources:**
+        - Local CSV file (highest priority)
+        - Firestore cloud database
+        - Fresh sklearn dataset (fallback)
         
         **Supported Models:**
         - Decision Tree: Interpretable tree-based model
@@ -683,12 +688,13 @@ def show_analytics_page():
         
         **Features:**
         - Automatic dataset detection and loading
+        - Cloud-local data synchronization
         - Real-time training visualization
         - Model performance comparison
         - Prediction confidence scoring
         - Model persistence (save/load)
-        - Dataset persistence (auto-save/load)
+        - Dataset persistence (local + cloud)
         """)
 
-if __name__ == "__main__":
-    main()
+f = 0.01
+print (f)
