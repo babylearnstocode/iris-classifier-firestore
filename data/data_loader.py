@@ -1,194 +1,375 @@
 import pandas as pd
-import numpy as np
-from datetime import datetime
-import streamlit as st
 import os
-import json
+import streamlit as st
+from sklearn.datasets import load_iris
+from firebase_admin import firestore
+import logging
 
 class DataLoader:
     def __init__(self):
-        self.dataset_path = "data/iris_dataset.csv"
-        self.metadata_path = "data/dataset_metadata.json"
+        self.local_dataset_path = 'data/iris_dataset.csv'
+        self.firestore_collection = 'iris_dataset'
         
-    def load_iris_from_firestore(self, firebase_config):
-        """Load iris dataset from Firestore"""
+    def check_local_dataset_exists(self):
+        """
+        Kiểm tra xem file iris_dataset.csv có tồn tại trong local không
+        
+        Returns:
+            bool: True nếu file tồn tại, False nếu không
+        """
         try:
-            if not firebase_config:
-                raise Exception("Firebase config is not available")
-            
-            db = firebase_config.get_firestore_client()
-            if not db:
-                raise Exception("Could not get Firestore client")
-            
-            st.info("🔄 Loading iris dataset from Firestore...")
-            
-            # Load dataset from Firestore collection 'iris_dataset'
-            dataset_docs = db.collection('iris_dataset').stream()
-            
-            data = []
-            for doc in dataset_docs:
-                doc_data = doc.to_dict()
-                data.append({
-                    'sepal_length': doc_data.get('sepal_length', 0),
-                    'sepal_width': doc_data.get('sepal_width', 0),
-                    'petal_length': doc_data.get('petal_length', 0),
-                    'petal_width': doc_data.get('petal_width', 0),
-                    'species': doc_data.get('species', 'unknown')
-                })
-            
-            if not data:
-                st.warning("No data found in Firestore. Creating sample dataset...")
-                return self._create_sample_dataset()
-            
-            df = pd.DataFrame(data)
-            
-            # Save dataset locally
-            self._save_dataset_locally(df)
-            
-            # Save metadata
-            metadata = {
-                'source': 'firestore',
-                'loaded_at': datetime.now().isoformat(),
-                'total_records': len(df),
-                'features': ['sepal_length', 'sepal_width', 'petal_length', 'petal_width'],
-                'target': 'species',
-                'species_counts': df['species'].value_counts().to_dict()
-            }
-            self._save_metadata(metadata)
-            
-            st.success(f"✅ Dataset loaded successfully! {len(df)} records")
-            return df, metadata
-            
+            return os.path.exists(self.local_dataset_path)
         except Exception as e:
-            st.error(f"Error loading from Firestore: {str(e)}")
-            st.info("Creating sample dataset as fallback...")
-            return self._create_sample_dataset()
-    
-    def _create_sample_dataset(self):
-        """Create sample iris dataset as fallback"""
-        from sklearn.datasets import load_iris
-        
-        # Load sklearn iris dataset
-        iris = load_iris()
-        
-        # Create DataFrame
-        df = pd.DataFrame(iris.data, columns=['sepal_length', 'sepal_width', 'petal_length', 'petal_width'])
-        df['species'] = [iris.target_names[i] for i in iris.target]
-        
-        # Save locally
-        self._save_dataset_locally(df)
-        
-        # Save metadata
-        metadata = {
-            'source': 'sklearn_fallback',
-            'loaded_at': datetime.now().isoformat(),
-            'total_records': len(df),
-            'features': ['sepal_length', 'sepal_width', 'petal_length', 'petal_width'],
-            'target': 'species',
-            'species_counts': df['species'].value_counts().to_dict()
-        }
-        self._save_metadata(metadata)
-        
-        return df, metadata
-    
-    def _save_dataset_locally(self, df):
-        """Save dataset to local CSV file"""
-        try:
-            # Create data directory if it doesn't exist
-            os.makedirs('data', exist_ok=True)
-            
-            # Save to CSV
-            df.to_csv(self.dataset_path, index=False)
-            
-        except Exception as e:
-            st.error(f"Error saving dataset locally: {str(e)}")
-    
-    def _save_metadata(self, metadata):
-        """Save dataset metadata"""
-        try:
-            # Create data directory if it doesn't exist
-            os.makedirs('data', exist_ok=True)
-            
-            # Save metadata
-            with open(self.metadata_path, 'w') as f:
-                json.dump(metadata, f, indent=2)
-                
-        except Exception as e:
-            st.error(f"Error saving metadata: {str(e)}")
+            st.error(f"Error checking local dataset: {str(e)}")
+            return False
     
     def load_local_dataset(self):
-        """Load dataset from local file"""
+        """
+        Load dataset từ file CSV local
+        
+        Returns:
+            pandas.DataFrame or None: DataFrame nếu load thành công, None nếu thất bại
+        """
         try:
-            if os.path.exists(self.dataset_path):
-                df = pd.read_csv(self.dataset_path)
+            if not self.check_local_dataset_exists():
+                return None
                 
-                # Load metadata
-                metadata = None
-                if os.path.exists(self.metadata_path):
-                    with open(self.metadata_path, 'r') as f:
-                        metadata = json.load(f)
-                
-                return df, metadata
+            df = pd.read_csv(self.local_dataset_path)
+            
+            # Validate dataset structure
+            required_columns = ['sepal_length', 'sepal_width', 'petal_length', 'petal_width', 'species']
+            if all(col in df.columns for col in required_columns):
+                st.info(f"📁 Dataset loaded from local file: {self.local_dataset_path}")
+                return df
             else:
-                return None, None
+                st.warning(f"Local dataset found but missing required columns: {required_columns}")
+                return None
                 
         except Exception as e:
             st.error(f"Error loading local dataset: {str(e)}")
-            return None, None
+            return None
     
-    def get_dataset_info(self):
-        """Get basic information about the dataset"""
-        df, metadata = self.load_local_dataset()
+    def load_from_firestore(self, db):
+        """
+        Load dataset từ Firestore collection
         
-        if df is not None:
-            info = {
-                'total_records': len(df),
-                'features': df.columns.tolist(),
-                'species_counts': df['species'].value_counts().to_dict() if 'species' in df.columns else {},
-                'loaded_at': metadata.get('loaded_at', 'Unknown') if metadata else 'Unknown',
-                'source': metadata.get('source', 'Unknown') if metadata else 'Unknown'
-            }
-            return info
-        
-        return None
-    
-    def upload_sample_data_to_firestore(self, firebase_config):
-        """Upload sample iris data to Firestore for testing"""
+        Args:
+            db: Firestore database client
+            
+        Returns:
+            pandas.DataFrame or None: DataFrame nếu load thành công, None nếu thất bại
+        """
         try:
-            from sklearn.datasets import load_iris
-            
-            if not firebase_config:
-                raise Exception("Firebase config is not available")
-            
-            db = firebase_config.get_firestore_client()
             if not db:
-                raise Exception("Could not get Firestore client")
+                st.warning("Firestore client not available")
+                return None
+                
+            # Lấy tất cả documents từ collection
+            docs = db.collection(self.firestore_collection).stream()
             
-            # Load sklearn iris dataset
-            iris = load_iris()
+            # Chuyển đổi documents thành list of dictionaries
+            data = []
+            for doc in docs:
+                doc_data = doc.to_dict()
+                data.append(doc_data)
             
-            st.info("🔄 Uploading sample iris data to Firestore...")
+            if not data:
+                st.info("No data found in Firestore collection")
+                return None
+                
+            # Chuyển đổi thành DataFrame
+            df = pd.DataFrame(data)
             
-            # Clear existing data
-            existing_docs = db.collection('iris_dataset').stream()
-            for doc in existing_docs:
-                doc.reference.delete()
+            # Validate dataset structure
+            required_columns = ['sepal_length', 'sepal_width', 'petal_length', 'petal_width', 'species']
+            if all(col in df.columns for col in required_columns):
+                st.success(f"☁️ Dataset loaded from Firestore ({len(df)} records)")
+                return df
+            else:
+                st.warning(f"Firestore dataset found but missing required columns: {required_columns}")
+                return None
+                
+        except Exception as e:
+            st.error(f"Error loading dataset from Firestore: {str(e)}")
+            return None
+    
+    def save_to_firestore(self, df, db):
+        """
+        Save dataset lên Firestore collection
+        
+        Args:
+            df: pandas.DataFrame - Dataset cần save
+            db: Firestore database client
             
-            # Upload new data
+        Returns:
+            bool: True nếu save thành công, False nếu thất bại
+        """
+        try:
+            if not db:
+                st.warning("Firestore client not available")
+                return False
+                
+            # Chuyển DataFrame thành list of dictionaries
+            records = df.to_dict('records')
+            
+            # Xóa collection cũ trước khi save mới (optional)
             batch = db.batch()
-            for i, (features, target) in enumerate(zip(iris.data, iris.target)):
-                doc_ref = db.collection('iris_dataset').document(f'sample_{i}')
-                batch.set(doc_ref, {
-                    'sepal_length': float(features[0]),
-                    'sepal_width': float(features[1]),
-                    'petal_length': float(features[2]),
-                    'petal_width': float(features[3]),
-                    'species': iris.target_names[target],
-                    'uploaded_at': datetime.now()
-                })
             
+            # Lấy tất cả documents hiện có để xóa
+            existing_docs = db.collection(self.firestore_collection).stream()
+            for doc in existing_docs:
+                batch.delete(doc.reference)
+            
+            # Commit batch delete
             batch.commit()
-            st.success(f"✅ Uploaded {len(iris.data)} records to Firestore!")
+            
+            # Tạo batch mới để add data
+            batch = db.batch()
+            
+            # Add từng record vào Firestore
+            for record in records:
+                doc_ref = db.collection(self.firestore_collection).document()
+                batch.set(doc_ref, record)
+            
+            # Commit batch add
+            batch.commit()
+            
+            st.success(f"☁️ Dataset saved to Firestore ({len(records)} records)")
+            return True
             
         except Exception as e:
-            st.error(f"Error uploading to Firestore: {str(e)}")
+            st.error(f"Error saving dataset to Firestore: {str(e)}")
+            return False
+    
+    def save_to_local(self, df):
+        """
+        Save dataset xuống file CSV local
+        
+        Args:
+            df: pandas.DataFrame - Dataset cần save
+            
+        Returns:
+            bool: True nếu save thành công, False nếu thất bại
+        """
+        try:
+            # Tạo thư mục data nếu chưa tồn tại
+            os.makedirs("data", exist_ok=True)
+            
+            # Save DataFrame thành CSV
+            df.to_csv(self.local_dataset_path, index=False)
+            
+            st.success(f"💾 Dataset saved to local file: {self.local_dataset_path}")
+            return True
+            
+        except Exception as e:
+            st.error(f"Error saving dataset to local: {str(e)}")
+            return False
+    
+    def load_sklearn_iris(self):
+        """
+        Load iris dataset từ sklearn
+        
+        Returns:
+            pandas.DataFrame or None: DataFrame nếu load thành công, None nếu thất bại
+        """
+        try:
+            iris = load_iris()
+            df = pd.DataFrame(iris.data, columns=['sepal_length', 'sepal_width', 'petal_length', 'petal_width'])
+            df['species'] = iris.target_names[iris.target]
+            
+            st.success(f"📊 Fresh Iris dataset loaded from sklearn ({len(df)} records)")
+            return df
+            
+        except Exception as e:
+            st.error(f"Error loading iris dataset from sklearn: {str(e)}")
+            return None
+    
+    def initialize_dataset(self, db=None):
+        """
+        Initialize dataset theo logic ưu tiên mới:
+        1. Kiểm tra local dataset trước
+        2. Nếu không có local và có Firestore connection -> bắt buộc load từ Firestore
+        3. Nếu không có cả hai -> hiển thị thông báo cần get data từ Firestore
+        
+        Args:
+            db: Firestore database client (optional)
+            
+        Returns:
+            pandas.DataFrame or None: Dataset đã load, None nếu thất bại hoặc cần get data
+        """
+        try:
+            # Bước 1: Kiểm tra local dataset trước
+            if self.check_local_dataset_exists():
+                df = self.load_local_dataset()
+                if df is not None:
+                    return df
+            
+            # Bước 2: Nếu không có local và có Firestore connection -> bắt buộc load từ Firestore
+            if db is not None:
+                st.info("🔄 No local dataset found, checking Firestore...")
+                df = self.load_from_firestore(db)
+                if df is not None:
+                    # Save xuống local để sử dụng lần sau
+                    self.save_to_local(df)
+                    return df
+                else:
+                    st.warning("⚠️ No data found in Firestore. Please get data from Firestore first.")
+                    return None
+            
+            # Bước 3: Không có Firestore connection
+            st.warning("⚠️ No Firestore connection available. Please check your connection and get data from Firestore.")
+            return None
+            
+        except Exception as e:
+            st.error(f"Error initializing dataset: {str(e)}")
+            return None
+    
+    def get_data_from_firestore_button(self, db):
+        """
+        Hiển thị button để get data từ Firestore và xử lý logic
+        
+        Args:
+            db: Firestore database client
+            
+        Returns:
+            pandas.DataFrame or None: Dataset nếu load thành công, None nếu thất bại
+        """
+        try:
+            if not db:
+                st.error("Firestore client not available. Please check your connection.")
+                return None
+            
+            # Hiển thị button
+            if st.button("🔄 Get Data from Firestore", type="primary"):
+                with st.spinner("Loading data from Firestore..."):
+                    df = self.load_from_firestore(db)
+                    if df is not None:
+                        # Save xuống local
+                        self.save_to_local(df)
+                        st.success("✅ Data successfully loaded from Firestore and saved to local!")
+                        # Rerun để refresh page
+                        st.rerun()
+                        return df
+                    else:
+                        st.error("❌ No data found in Firestore collection.")
+                        return None
+            
+            return None
+            
+        except Exception as e:
+            st.error(f"Error getting data from Firestore: {str(e)}")
+            return None
+    
+    def check_data_availability(self, db=None):
+        """
+        Kiểm tra tính khả dụng của dữ liệu và hiển thị UI tương ứng
+        
+        Args:
+            db: Firestore database client (optional)
+            
+        Returns:
+            pandas.DataFrame or None: Dataset nếu có sẵn, None nếu cần get data
+        """
+        try:
+            # Kiểm tra local trước
+            if self.check_local_dataset_exists():
+                df = self.load_local_dataset()
+                if df is not None:
+                    return df
+            
+            # Không có local data
+            st.warning("⚠️ No local dataset found.")
+            
+            if db is not None:
+                # Có Firestore connection, hiển thị button get data
+                st.info("💡 You can get data from Firestore cloud storage.")
+                return self.get_data_from_firestore_button(db)
+            else:
+                # Không có Firestore connection
+                st.error("❌ No Firestore connection available. Please check your Firebase configuration.")
+                return None
+                
+        except Exception as e:
+            st.error(f"Error checking data availability: {str(e)}")
+            return None
+    
+    def get_dataset_info(self, df):
+        """
+        Lấy thông tin cơ bản về dataset
+        
+        Args:
+            df: pandas.DataFrame - Dataset
+            
+        Returns:
+            dict: Dictionary chứa thông tin về dataset
+        """
+        try:
+            if df is None:
+                return None
+                
+            info = {
+                'total_records': len(df),
+                'features': len(df.columns) - 1,  # Exclude target column
+                'species_count': len(df['species'].unique()),
+                'species_list': df['species'].unique().tolist(),
+                'species_distribution': df['species'].value_counts().to_dict(),
+                'columns': df.columns.tolist()
+            }
+            
+            return info
+            
+        except Exception as e:
+            st.error(f"Error getting dataset info: {str(e)}")
+            return None
+    
+    def refresh_from_firestore(self, db):
+        """
+        Refresh dataset từ Firestore (force reload)
+        
+        Args:
+            db: Firestore database client
+            
+        Returns:
+            pandas.DataFrame or None: Dataset mới từ Firestore
+        """
+        try:
+            if not db:
+                st.warning("Firestore client not available")
+                return None
+                
+            df = self.load_from_firestore(db)
+            if df is not None:
+                # Save xuống local để thay thế file cũ
+                self.save_to_local(df)
+            
+            return df
+            
+        except Exception as e:
+            st.error(f"Error refreshing dataset from Firestore: {str(e)}")
+            return None
+    
+    def upload_local_to_firestore(self, db):
+        """
+        Upload dataset từ local lên Firestore
+        
+        Args:
+            db: Firestore database client
+            
+        Returns:
+            bool: True nếu upload thành công, False nếu thất bại
+        """
+        try:
+            if not db:
+                st.warning("Firestore client not available")
+                return False
+                
+            df = self.load_local_dataset()
+            if df is not None:
+                return self.save_to_firestore(df, db)
+            else:
+                st.warning("No local dataset found to upload")
+                return False
+                
+        except Exception as e:
+            st.error(f"Error uploading local dataset to Firestore: {str(e)}")
+            return False
