@@ -46,7 +46,7 @@ class ModelTrainer:
             
             # Split data - sử dụng test_size=0.2 như trong Colab
             X_train, X_test, y_train, y_test = train_test_split(
-                X, y_encoded, test_size=0.2, random_state=42, stratify=y_encoded
+                X, y_encoded, test_size=0.3, random_state=42, stratify=y_encoded
             )
             
             # Scale features (only for SVM and Logistic Regression)
@@ -245,15 +245,15 @@ class ModelTrainer:
         
         try:
             # Create models directory
-            os.makedirs("models", exist_ok=True)
+            os.makedirs("model/saved_models/", exist_ok=True)
             
             # Save model
-            model_filename = f"models/{model_name.lower().replace(' ', '_')}_model.pkl"
+            model_filename = f"model/saved_models/{model_name.lower().replace(' ', '_')}_model.pkl"
             joblib.dump(self.results[model_name]['model'], model_filename)
             
             # Save scaler and encoder
-            scaler_filename = f"models/{model_name.lower().replace(' ', '_')}_scaler.pkl"
-            encoder_filename = f"models/{model_name.lower().replace(' ', '_')}_encoder.pkl"
+            scaler_filename = f"model/saved_models/{model_name.lower().replace(' ', '_')}_scaler.pkl"
+            encoder_filename = f"model/saved_models/{model_name.lower().replace(' ', '_')}_encoder.pkl"
             
             joblib.dump(self.scaler, scaler_filename)
             joblib.dump(self.label_encoder, encoder_filename)
@@ -269,9 +269,9 @@ class ModelTrainer:
     def load_model(self, model_name):
         """Load a saved model"""
         try:
-            model_filename = f"models/{model_name.lower().replace(' ', '_')}_model.pkl"
-            scaler_filename = f"models/{model_name.lower().replace(' ', '_')}_scaler.pkl"
-            encoder_filename = f"models/{model_name.lower().replace(' ', '_')}_encoder.pkl"
+            model_filename = f"model/saved_models/{model_name.lower().replace(' ', '_')}_model.pkl"
+            scaler_filename = f"model/saved_models/{model_name.lower().replace(' ', '_')}_scaler.pkl"
+            encoder_filename = f"model/saved_models/{model_name.lower().replace(' ', '_')}_encoder.pkl"
             
             if os.path.exists(model_filename):
                 model = joblib.load(model_filename)
