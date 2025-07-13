@@ -38,12 +38,17 @@ if 'dataset' not in st.session_state:
     st.session_state.dataset = None
 
 def check_saved_models():
-    saved_models = ['decision_tree', 'random_forest', 'svm', 'logistic_regression']
-    for model in saved_models:
+    """Check if all models are trained and saved"""
+    required_models = ['decision_tree', 'random_forest', 'svm', 'logistic_regression']
+    trained_count = 0
+    
+    for model in required_models:
         model_path = f"model/saved_models/{model}_model.pkl"
         if os.path.exists(model_path):
-            return True
-    return False
+            trained_count += 1
+    
+    # Return True only if all models are trained
+    return trained_count == len(required_models)
 
 # Nếu có model lưu sẵn → cập nhật session state
 if not st.session_state.models_trained:
@@ -400,7 +405,7 @@ def show_data_loading_page(db):
         st.bar_chart(species_counts)
 
 def show_model_training_page():
-    """Model training page"""
+    """Model training page - train all models at once"""
     st.header("🤖 Model Training")
     
     if not st.session_state.dataset_loaded:
@@ -409,49 +414,124 @@ def show_model_training_page():
     
     df = st.session_state.dataset
     
-    # Model selection
-    st.subheader("Select Models to Train")
+    # Check if models are already trained
+    if st.session_state.models_trained:
+        model = model_trainer.load_model('Decision Tree')
+        if model:
+            # Gán thủ công vào results để enable visualization
+            model_trainer.results['Decision Tree'] = {
+                'model': model,
+                'accuracy': 0,  # hoặc load từ metadata
+                'y_test': [], 'y_pred': [],
+                'y_test_original': [], 'y_pred_original': [],
+                'X_train': [], 'X_test': [],
+                'X_train_scaled': [], 'X_test_scaled': [],
+                'train_accuracy': 0,
+            }
+
+
+        st.info("✅ Models have been trained! Here are the results:")
+        
+        # Show Decision Tree results (default display)
+        st.subheader("🌳 Decision Tree Results")
+        
+        # Load and display decision tree results
+        model_trainer.show_feature_importance('Decision Tree')
+        
+        st.subheader("Decision Tree Structure")
+        model_trainer.visualize_decision_tree()
+        
+        # Option to retrain
+        if st.button("🔄 Retrain All Models", type="secondary"):
+            st.session_state.models_trained = False
+            st.rerun()
+        
+        return
     
+    # Training section
+    st.subheader("🚀 Train All Models")
+    st.info("This will train all 4 models: Decision Tree, Random Forest, SVM, and Logistic Regression")
+    
+    # Show available models
     available_models = ['Decision Tree', 'Random Forest', 'SVM', 'Logistic Regression']
-    selected_model = st.selectbox(
-        "Choose a model to train",
-        available_models,
-        index=0,
-        help="Select a single model to train"
-    )
+    st.write("**Models to be trained:**")
+    for model in available_models:
+        st.write(f"• {model}")
     
-    if st.button("🚀 Start Training", type="primary"):
-        # Prepare data
+    if st.button("🚀 Start Training All Models", type="primary"):
+        # Prepare data once
         with st.spinner("Preparing data..."):
             X_train, X_test, X_train_scaled, X_test_scaled, y_train, y_test = model_trainer.prepare_data(df)
         
         if X_train is not None:
             st.success("✅ Data prepared successfully!")
+            
+            # Progress bar for training
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            
+            trained_models = []
+            total_models = len(available_models)
+            
+            # Train all models
+            for i, model_name in enumerate(available_models):
+                status_text.text(f"Training {model_name}...")
+                progress_bar.progress((i) / total_models)
+                
+                with st.spinner(f"Training {model_name}..."):
+                    model, accuracy = model_trainer.train_model(
+                        model_name, X_train, X_test, X_train_scaled, X_test_scaled, y_train, y_test
+                    )
+                
+                if model is not None:
+                    trained_models.append(model_name)
+                    # Save model
+                    if model_trainer.save_model(model_name):
+                        save_model_metadata(model_name, accuracy)
+                    
+                else:
+                    st.error(f"❌ Failed to train {model_name}")
+            
+            # Complete progress
+            progress_bar.progress(1.0)
+            status_text.text("Training completed!")
+            
+            if trained_models:
+                st.session_state.models_trained = True
+                st.session_state.trained_models = trained_models
+                
+                st.success(f"🎉 Successfully trained {len(trained_models)} models!")
 
-            st.subheader(f"Training {selected_model}")
-            with st.spinner(f"Training {selected_model}..."):
-                model, accuracy = model_trainer.train_model(
-                    selected_model, X_train, X_test, X_train_scaled, X_test_scaled, y_train, y_test
-                )
+                # Bảng tổng hợp so sánh Accuracy
+                st.subheader("📊 Accuracy Comparison of All Models")
 
-            if model is not None:
-                st.success(f"✅ {selected_model} trained successfully!")
-                st.metric("Test Accuracy", f"{accuracy:.3f}")
+                comparison_data = []
+                for model_name in trained_models:
+                    result = model_trainer.results.get(model_name)
+                    if result:
+                        comparison_data.append({
+                            'Model': model_name,
+                            'Train Accuracy': round(result.get('train_accuracy', 0), 4),
+                            'Test Accuracy': round(result['accuracy'], 4)
+                        })
 
-                model_trainer.show_results(selected_model)
-
-                if selected_model in ['Decision Tree', 'Random Forest']:
-                    model_trainer.show_feature_importance(selected_model)
-
-                if selected_model == 'Decision Tree':
-                    st.subheader("Decision Tree Structure")
-                    model_trainer.visualize_decision_tree()
-
-                if model_trainer.save_model(selected_model):
-                    st.session_state.models_trained = True
-                    st.session_state.trained_models = [selected_model]
-                    save_model_metadata(selected_model, accuracy)
-                    st.success("🎉 Training completed! You can now make predictions.")
+                df_comparison = pd.DataFrame(comparison_data).sort_values(by='Test Accuracy', ascending=False)
+                st.dataframe(df_comparison, use_container_width=True)
+                
+                # Automatically show Decision Tree results
+                st.subheader("🌳 Decision Tree Results")
+                
+                model_trainer.show_feature_importance('Decision Tree')
+                
+                st.subheader("Decision Tree Structure")
+                model_trainer.visualize_decision_tree()
+            
+                
+                st.info("✨ All models trained! You can now make predictions on the Prediction page.")
+            else:
+                st.error("❌ No models were trained successfully")
+        else:
+            st.error("❌ Failed to prepare data")
 
 
 def show_prediction_page(db):

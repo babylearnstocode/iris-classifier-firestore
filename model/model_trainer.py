@@ -78,6 +78,11 @@ class ModelTrainer:
             
             # Calculate accuracy
             accuracy = accuracy_score(y_test, y_pred)
+
+            train_acc = accuracy_score(
+                y_train,
+                model.predict(X_train if model_name not in ['SVM', 'Logistic Regression'] else X_train_scaled)
+            )
             
             # Store results with original labels
             self.results[model_name] = {
@@ -90,7 +95,8 @@ class ModelTrainer:
                 'X_train': X_train,
                 'X_test': X_test,
                 'X_train_scaled': X_train_scaled,
-                'X_test_scaled': X_test_scaled
+                'X_test_scaled': X_test_scaled,
+                'train_accuracy': train_acc,
             }
             
             return model, accuracy
@@ -259,7 +265,6 @@ class ModelTrainer:
             joblib.dump(self.label_encoder, encoder_filename)
             
             st.success(f"✅ Model {model_name} saved successfully!")
-            st.info(f"Files saved:\n- {model_filename}\n- {scaler_filename}\n- {encoder_filename}")
             return True
             
         except Exception as e:
