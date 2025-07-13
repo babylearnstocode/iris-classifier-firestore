@@ -37,12 +37,25 @@ if 'models_trained' not in st.session_state:
 if 'dataset' not in st.session_state:
     st.session_state.dataset = None
 
+def check_saved_models():
+    saved_models = ['decision_tree', 'random_forest', 'svm', 'logistic_regression']
+    for model in saved_models:
+        model_path = f"model/saved_models/{model}_model.pkl"
+        if os.path.exists(model_path):
+            return True
+    return False
+
+# Nếu có model lưu sẵn → cập nhật session state
+if not st.session_state.models_trained:
+    if check_saved_models():
+        st.session_state.models_trained = True
+
 def load_trained_model(model_name):
     """Load trained model from disk"""
     try:
-        model_path = f"models/{model_name.lower().replace(' ', '_')}_model.pkl"
-        scaler_path = f"models/{model_name.lower().replace(' ', '_')}_scaler.pkl"
-        encoder_path = f"models/{model_name.lower().replace(' ', '_')}_encoder.pkl"
+        model_path = f"model/saved_models/{model_name.lower().replace(' ', '_')}_model.pkl"
+        scaler_path = f"model/saved_models/{model_name.lower().replace(' ', '_')}_scaler.pkl"
+        encoder_path = f"model/saved_models/{model_name.lower().replace(' ', '_')}_encoder.pkl"
         
         if os.path.exists(model_path) and os.path.exists(scaler_path) and os.path.exists(encoder_path):
             model = joblib.load(model_path)
@@ -95,7 +108,7 @@ def save_model_metadata(model_name, accuracy):
             'trained_at': datetime.now().isoformat(),
         }
         
-        metadata_path = f"models/{model_name.lower().replace(' ', '_')}_metadata.json"
+        metadata_path = f"model/saved_models/{model_name.lower().replace(' ', '_')}_metadata.json"
         with open(metadata_path, 'w') as f:
             json.dump(metadata, f, indent=2)
             
@@ -128,9 +141,9 @@ def main():
     firebase_config = FirebaseConfig()
     db = firebase_config.get_firestore_client()
     
-    # Initialize dataset on startup - cải thiện logic
+    # Try to initialize dataset from local only (không auto load từ Firestore nữa)
     dataset_initialized = initialize_dataset(db)
-    
+
     # Header
     st.title("🌸 Iris Classifier")
     st.markdown("---")
@@ -139,60 +152,46 @@ def main():
         st.sidebar.success("☁️ Connected to Firestore")
     else:
         st.sidebar.error("❌ Failed to connect to Firestore")
-    
-    # Sidebar
-    with st.sidebar:
-        st.header("Pipeline Status")
-        
-        # Dataset status - cải thiện hiển thị
-        if st.session_state.dataset_loaded:
-            st.success("📊 Dataset Ready")
-            dataset_info = data_loader.get_dataset_info(st.session_state.dataset)
-            if dataset_info:
-                st.info(f"📋 {dataset_info['total_records']} records, {dataset_info['species_count']} species")
-        else:
-            st.warning("📊 Dataset Not Loaded")
-            if db:
-                st.info("💡 Data can be loaded from Firestore")
-            else:
-                st.error("❌ No data source available")
-        
-        # Model status
-        if st.session_state.models_trained:
-            st.success("🤖 Models Trained")
-        else:
-            st.warning("🤖 Models Not Trained")
-        
-        st.markdown("---")
-        st.header("Navigation")
-        
-        # Navigation - cải thiện logic điều hướng
-        pages = []
-        
-        # Luôn hiển thị Data Loading page để user có thể quản lý dữ liệu
-        pages.append("Data Loading")
-        
-        # Chỉ hiển thị các page khác khi đã có dataset
-        if st.session_state.dataset_loaded:
-            pages.extend(["Dataset Overview", "Model Training", "Prediction", "Analytics"])
-        
-        page = st.radio(
-            "Select Page",
-            pages,
-            help="Navigate through the ML pipeline"
-        )
-    
-    # Main content based on selected page
-    if page == "Data Loading":
-        show_data_loading_page(db)
-    elif page == "Dataset Overview":
+
+    # Nếu chưa có dataset thì chỉ hiển thị 1 trang duy nhất
+    if not st.session_state.dataset_loaded:
+        st.sidebar.warning("📊 Dataset Not Loaded")
+        st.sidebar.info("💡 Please load dataset from Firestore")
+
+        st.subheader("📥 Load Iris Dataset")
+        st.info("No dataset is available. Please click the button below to load from Firestore.")
+
+        if db and st.button("☁️ Load from Firestore"):
+            df = data_loader.load_from_firestore(db)
+            if df is not None:
+                st.session_state.dataset = df
+                st.session_state.dataset_loaded = True
+                data_loader.save_to_local(df)
+                st.success("✅ Dataset loaded successfully!")
+                st.rerun()
+        return  # Dừng main() tại đây nếu chưa có dataset
+
+    # Nếu có dataset rồi → vào giao diện chính (không có "Data Loading")
+    st.sidebar.success("📊 Dataset Ready")
+    dataset_info = data_loader.get_dataset_info(st.session_state.dataset)
+    if dataset_info:
+        st.sidebar.info(f"📋 {dataset_info['total_records']} records, {dataset_info['species_count']} species")
+
+    if st.session_state.models_trained:
+        st.sidebar.success("🤖 Models Trained")
+    else:
+        st.sidebar.warning("🤖 Models Not Trained")
+
+    # Navigation Pages (bỏ "Data Loading")
+    pages = ["Dataset Overview", "Model Training", "Prediction"]
+    page = st.sidebar.radio("📂 Select Page", pages)
+
+    if page == "Dataset Overview":
         show_dataset_overview_page()
     elif page == "Model Training":
         show_model_training_page()
     elif page == "Prediction":
         show_prediction_page(db)
-    elif page == "Analytics":
-        show_analytics_page()
 
 def show_dataset_overview_page():
     """Dataset overview page - simple view with name and 10 samples"""
@@ -414,18 +413,13 @@ def show_model_training_page():
     st.subheader("Select Models to Train")
     
     available_models = ['Decision Tree', 'Random Forest', 'SVM', 'Logistic Regression']
-    selected_models = st.multiselect(
-        "Choose models to train",
+    selected_model = st.selectbox(
+        "Choose a model to train",
         available_models,
-        default=['Decision Tree'],
-        help="Select one or more models to train"
+        index=0,
+        help="Select a single model to train"
     )
     
-    if not selected_models:
-        st.warning("Please select at least one model to train")
-        return
-    
-    # Start training
     if st.button("🚀 Start Training", type="primary"):
         # Prepare data
         with st.spinner("Preparing data..."):
@@ -433,55 +427,32 @@ def show_model_training_page():
         
         if X_train is not None:
             st.success("✅ Data prepared successfully!")
-            
-            # Train selected models
-            training_results = {}
-            
-            for model_name in selected_models:
-                st.subheader(f"Training {model_name}")
-                
-                with st.spinner(f"Training {model_name}..."):
-                    model, accuracy = model_trainer.train_model(
-                        model_name, X_train, X_test, X_train_scaled, X_test_scaled, y_train, y_test
-                    )
-                
-                if model is not None:
-                    st.success(f"✅ {model_name} trained successfully!")
-                    
-                    # Show basic metrics
-                    st.metric("Test Accuracy", f"{accuracy:.3f}")
-                    
-                    # Show training results
-                    st.subheader(f"Training Results - {model_name}")
-                    model_trainer.show_results(model_name)
-                    
-                    # Show feature importance for tree-based models
-                    if model_name in ['Decision Tree', 'Random Forest']:
-                        model_trainer.show_feature_importance(model_name)
-                    
-                    # Special visualization for Decision Tree
-                    if model_name == 'Decision Tree':
-                        st.subheader("Decision Tree Structure")
-                        model_trainer.visualize_decision_tree()
-                    
-                    # Save model
-                    if model_trainer.save_model(model_name):
-                        training_results[model_name] = True
-                        # Save metadata
-                        save_model_metadata(model_name, accuracy)
-                
-                st.markdown("---")
-            
-            # Model comparison
-            if len(selected_models) > 1:
-                st.subheader("Model Comparison")
-                model_trainer.compare_models()
-            
-            # Update session state
-            if training_results:
-                st.session_state.models_trained = True
-                st.session_state.trained_models = list(training_results.keys())
-                st.success("🎉 Training completed! You can now make predictions.")
+
+            st.subheader(f"Training {selected_model}")
+            with st.spinner(f"Training {selected_model}..."):
+                model, accuracy = model_trainer.train_model(
+                    selected_model, X_train, X_test, X_train_scaled, X_test_scaled, y_train, y_test
+                )
+
+            if model is not None:
+                st.success(f"✅ {selected_model} trained successfully!")
+                st.metric("Test Accuracy", f"{accuracy:.3f}")
+
+                model_trainer.show_results(selected_model)
+
+                if selected_model in ['Decision Tree', 'Random Forest']:
+                    model_trainer.show_feature_importance(selected_model)
+
+                if selected_model == 'Decision Tree':
+                    st.subheader("Decision Tree Structure")
+                    model_trainer.visualize_decision_tree()
+
+                if model_trainer.save_model(selected_model):
+                    st.session_state.models_trained = True
+                    st.session_state.trained_models = [selected_model]
+                    save_model_metadata(selected_model, accuracy)
+                    st.success("🎉 Training completed! You can now make predictions.")
+
 
 def show_prediction_page(db):
     """Prediction page"""
@@ -490,7 +461,7 @@ def show_prediction_page(db):
     # Check if models are trained
     available_models = []
     for model_name in ['Decision Tree', 'Random Forest', 'SVM', 'Logistic Regression']:
-        model_path = f"models/{model_name.lower().replace(' ', '_')}_model.pkl"
+        model_path = f"model/saved_models/{model_name.lower().replace(' ', '_')}_model.pkl"
         if os.path.exists(model_path):
             available_models.append(model_name)
     
@@ -616,85 +587,5 @@ def show_prediction_page(db):
         except Exception as e:
             st.error(f"Failed to load data from Firestore: {e}")
 
-def show_analytics_page():
-    """Analytics page"""
-    st.header("📊 Analytics & Insights")
-    
-    # Model performance comparison
-    st.subheader("Model Performance Overview")
-    
-    # Check available models
-    available_models = []
-    model_performances = []
-    
-    for model_name in ['Decision Tree', 'Random Forest', 'SVM', 'Logistic Regression']:
-        metadata_path = f"models/{model_name.lower().replace(' ', '_')}_metadata.json"
-        if os.path.exists(metadata_path):
-            try:
-                with open(metadata_path, 'r') as f:
-                    metadata = json.load(f)
-                    available_models.append(model_name)
-                    model_performances.append({
-                        'Model': model_name,
-                        'Accuracy': metadata.get('accuracy', 0),
-                        'Trained At': metadata.get('trained_at', 'Unknown')
-                    })
-            except:
-                continue
-    
-    if model_performances:
-        # Performance comparison chart
-        perf_df = pd.DataFrame(model_performances)
-        
-        fig = px.bar(perf_df, x='Model', y='Accuracy', 
-                     title='Model Accuracy Comparison',
-                     text='Accuracy')
-        fig.update_traces(texttemplate='%{text:.3f}', textposition='outside')
-        st.plotly_chart(fig, use_container_width=True)
-        
-        # Performance table
-        st.subheader("Detailed Performance Metrics")
-        st.dataframe(perf_df)
-        
-        # Best model recommendation
-        best_model = perf_df.loc[perf_df['Accuracy'].idxmax()]
-        st.success(f"🏆 Best performing model: **{best_model['Model']}** with {best_model['Accuracy']:.3f} accuracy")
-    
-    else:
-        st.info("No trained models found for analysis")
-
-    # Additional information
-    st.markdown("---")
-    with st.expander("ℹ️ About This Application"):
-        st.markdown("""
-        This application implements a complete Machine Learning pipeline for Iris flower classification:
-        
-        **Pipeline Steps:**
-        1. **Data Loading**: Load from local → Firestore → sklearn (priority order)
-        2. **Model Training**: Train multiple ML models with real-time visualization
-        3. **Prediction**: Use trained models to predict iris species
-        4. **Analytics**: Analyze model performance
-        
-        **Data Sources:**
-        - Local CSV file (highest priority)
-        - Firestore cloud database
-        - Fresh sklearn dataset (fallback)
-        
-        **Supported Models:**
-        - Decision Tree: Interpretable tree-based model
-        - Random Forest: Ensemble of decision trees
-        - SVM: Support Vector Machine classifier
-        - Logistic Regression: Linear classification model
-        
-        **Features:**
-        - Automatic dataset detection and loading
-        - Cloud-local data synchronization
-        - Real-time training visualization
-        - Model performance comparison
-        - Prediction confidence scoring
-        - Model persistence (save/load)
-        - Dataset persistence (local + cloud)
-        """)
-
-f = 0.01
-print (f)
+if __name__ == "__main__":
+    main()

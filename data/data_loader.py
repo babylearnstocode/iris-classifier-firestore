@@ -204,20 +204,9 @@ class DataLoader:
                 if df is not None:
                     return df
             
-            # Bước 2: Nếu không có local và có Firestore connection -> bắt buộc load từ Firestore
-            if db is not None:
-                st.info("🔄 No local dataset found, checking Firestore...")
-                df = self.load_from_firestore(db)
-                if df is not None:
-                    # Save xuống local để sử dụng lần sau
-                    self.save_to_local(df)
-                    return df
-                else:
-                    st.warning("⚠️ No data found in Firestore. Please get data from Firestore first.")
-                    return None
-            
-            # Bước 3: Không có Firestore connection
-            st.warning("⚠️ No Firestore connection available. Please check your connection and get data from Firestore.")
+            # Bước 2: Nếu không có local, KHÔNG tự động tải từ Firestore nữa
+            st.warning("⚠️ No local dataset found.")
+            st.info("💡 Please use the 'Load from Firestore' button below to load data manually.")
             return None
             
         except Exception as e:
